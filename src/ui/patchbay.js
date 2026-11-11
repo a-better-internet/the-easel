@@ -16,12 +16,18 @@
 //   Delete/Backspace on a focused jack pulls its top plug.
 
 import { PatchGraph } from '../patch/graph.js';
-import { JACK_BY_ID } from '../spec.js';
+import { JACK_BY_ID, jackColor } from '../spec.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const DRAG_THRESHOLD = 4;
 const DOUBLE_TAP_MS = 320;
 export const STACK_OFFSET = 6;
+/** Plug-head radii [body, ring, tip] for banana plugs, Tini-Jax plugs and bar screws. */
+const PLUG_RADII = { banana: [7.5, 5, 2.4], tiny: [6.5, 4, 2], bar: [5.5, 3.6, 1.2] };
+/** Cables whose ends are both above this line (panel px) loop upward. */
+const TOP_STRIP = 90;
+/** Two banana jacks closer than this (panel px) are joined by a shorting bar. */
+export const BAR_REACH = 72;
 
 function svg(tag, attrs = {}) {
   const el = document.createElementNS(SVGNS, tag);
@@ -32,12 +38,14 @@ function svg(tag, attrs = {}) {
 /**
  * Banana-plug coordinate helper. Each plug stacked on a jack sits a little
  * further up and to the right, as if extending out toward the player.
- * Coordinates are relative to `origin` (the cable layer's bounding rect).
+ * Coordinates are in the cable layer's own (unscaled) pixels; `origin` is its
+ * bounding rect plus the CSS scale the panel is drawn at.
  */
-export function getStackedCenter(element, stackIndex, origin = { left: 0, top: 0 }) {
+export function getStackedCenter(element, stackIndex, origin = { left: 0, top: 0, scale: 1 }) {
   const rect = element.getBoundingClientRect();
-  let x = rect.left + rect.width / 2 - origin.left;
-  let y = rect.top + rect.height / 2 - origin.top;
+  const k = origin.scale || 1;
+  let x = (rect.left + rect.width / 2 - origin.left) / k;
+  let y = (rect.top + rect.height / 2 - origin.top) / k;
   if (stackIndex > 0) {
     x += STACK_OFFSET * stackIndex;
     y -= STACK_OFFSET * stackIndex;
@@ -50,11 +58,13 @@ export function getStackedCenter(element, stackIndex, origin = { left: 0, top: 0
  * droop: a cubic with both control points `sag` below the ends bottoms out
  * about 0.75 * sag below the lower end.
  */
-export function cablePath(a, b, floor = Infinity) {
+export function cablePath(a, b, floor = Infinity, loopUp = false) {
   const dx = b.x - a.x;
   const dist = Math.hypot(dx, b.y - a.y);
   let sag = Math.min(150, 26 + dist * 0.3);
   sag = Math.max(18, Math.min(sag, (floor - Math.max(a.y, b.y)) / 0.75));
+  // stiff short cables between jacks along the top edge loop up over the panel
+  if (loopUp) sag = -Math.min(80, 24 + dist * 0.22);
   return `M${a.x.toFixed(1)},${a.y.toFixed(1)} C${(a.x + dx * 0.18).toFixed(1)},${(a.y + sag).toFixed(1)} ${(b.x - dx * 0.18).toFixed(1)},${(b.y + sag).toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
 }
 
@@ -133,7 +143,7 @@ export class Patchbay {
 
   jackName(id) {
     const j = JACK_BY_ID[id];
-    return j ? `${j.module} ${j.label}` : id;
+    return j ? `${j.label} ${j.dir === 'out' ? 'output' : 'input'}` : id;
   }
 
   emit() {
@@ -150,7 +160,17 @@ export class Patchbay {
   colorFor(cable) {
     const ends = cable.ends.map((e) => e.jack && JACK_BY_ID[e.jack]).filter(Boolean);
     const src = ends.find((j) => j.dir === 'out') || ends[0];
-    return src ? `var(--c-${src.module})` : 'var(--c-out)';
+    return src ? `var(--cable-${jackColor(src)})` : 'var(--cable-black)';
+  }
+
+  /** 'bar' (shorting bar), 'tini' (Tini-Jax cable) or 'cable' (banana cable). */
+  styleFor(cable, a, b) {
+    const types = cable.ends.map((e) => e.jack && JACK_BY_ID[e.jack]?.type);
+    if (types[0] === 'tiny' && types[1] === 'tiny') return 'tini';
+    if (a && b && types[0] === 'banana' && types[1] === 'banana' && !(this.drag && this.drag.cableId === cable.id)) {
+      if (Math.hypot(a.x - b.x, a.y - b.y) <= BAR_REACH) return 'bar';
+    }
+    return 'cable';
   }
 
   makeView(id) {
@@ -196,7 +216,9 @@ export class Patchbay {
   }
 
   origin() {
-    return this.svg.getBoundingClientRect();
+    const r = this.svg.getBoundingClientRect();
+    const w = this.container.offsetWidth;
+    return { left: r.left, top: r.top, width: r.width, height: r.height, scale: w > 0 ? r.width / w : 1 };
   }
 
   endPoint(id, end, origin) {
@@ -216,10 +238,22 @@ export class Patchbay {
     const a = this.endPoint(id, 0, origin);
     const b = this.endPoint(id, 1, origin);
     const color = this.colorFor(cable);
+    const style = this.styleFor(cable, a, b);
     v.g.style.setProperty('--cc', color);
+    v.g.dataset.style = style;
     v.plugs.forEach((p, end) => {
       const pt = end === 0 ? a : b;
+      const j = cable.ends[end].jack && JACK_BY_ID[cable.ends[end].jack];
       p.style.setProperty('--cc', color);
+      const ps = style === 'bar' ? 'bar' : (j?.type ?? (style === 'tini' ? 'tiny' : 'banana'));
+      if (p.dataset.style !== ps) {
+        p.dataset.style = ps;
+        const [rb, rr, rt] = PLUG_RADII[ps];
+        const [, body, ring, tip] = p.children;
+        body.setAttribute('r', rb);
+        ring.setAttribute('r', rr);
+        tip.setAttribute('r', rt);
+      }
       p.style.display = pt ? '' : 'none';
       if (pt) p.setAttribute('transform', `translate(${pt.x.toFixed(1)},${pt.y.toFixed(1)})`);
     });
@@ -228,7 +262,7 @@ export class Patchbay {
       return;
     }
     v.g.style.display = '';
-    const d = cablePath(a, b, origin.height + 26);
+    const d = style === 'bar' ? `M${a.x.toFixed(1)},${a.y.toFixed(1)} L${b.x.toFixed(1)},${b.y.toFixed(1)}` : cablePath(a, b, origin.height / origin.scale + 26, Math.max(a.y, b.y) < TOP_STRIP);
     v.shadow.setAttribute('d', d);
     v.core.setAttribute('d', d);
     v.shine.setAttribute('d', d);
@@ -468,7 +502,7 @@ export class Patchbay {
 
   toLocal(x, y) {
     const o = this.origin();
-    return { x: x - o.left, y: y - o.top };
+    return { x: (x - o.left) / o.scale, y: (y - o.top) / o.scale };
   }
 
   // ------------------------------------------------------------ click-to-patch

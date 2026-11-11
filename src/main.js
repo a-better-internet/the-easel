@@ -4,10 +4,10 @@ import { Patchbay } from './ui/patchbay.js';
 import { AudioHost } from './audio/host.js';
 import { Scope } from './ui/scope.js';
 import { setLed, h } from './ui/controls.js';
-import { RECIPES, RECIPE_BY_ID, recipeParams } from './patch/recipes.js';
-import { INPUTS, PARAM_BY_ID } from './spec.js';
+import { RECIPES, RECIPE_BY_ID, recipeParams, recipeCables } from './patch/recipes.js';
+import { PARAM_BY_ID } from './spec.js';
 
-const STORAGE_KEY = 'the-easel/state/v1';
+const STORAGE_KEY = 'the-easel/state/v2';
 const DEFAULT_RECIPE = 'bell-garden';
 
 const $ = (id) => document.getElementById(id);
@@ -31,10 +31,12 @@ const announce = (msg) => {
 
 // ------------------------------------------------------------------ panel
 const panelEl = $('panel');
-const { jacks, leds } = buildPanel(panelEl, store, {
-  onKick: () => {
-    host.send({ type: 'kick' });
-    flash(leds.pulse);
+const scaler = $('panel-scaler');
+let oneFlash = 0;
+const { jacks, leds, programCard } = buildPanel(panelEl, store, {
+  onOne: () => {
+    host.send({ type: 'one' });
+    oneFlash = 1;
   },
 });
 
@@ -46,27 +48,18 @@ const patchbay = new Patchbay({
   onChange: (nets) => {
     currentNets = nets;
     host.setPatch(nets);
-    markOverrides(nets);
+    markDriven(nets);
     markModified();
     scheduleSave();
   },
 });
 
-/** Dim the internal selector that a patched input overrides. */
-function markOverrides(nets) {
+/** Light up input jacks that hear something, and show when aux in replaces the noise. */
+function markDriven(nets) {
   const driven = new Set();
   for (const n of nets) if (n.outs.length) for (const i of n.ins) driven.add(i);
-  for (const input of INPUTS) {
-    if (!input.overrides) continue;
-    const on = driven.has(input.id);
-    for (const el of panelEl.querySelectorAll(`[data-param="${input.overrides}"]`)) {
-      if (el.classList.contains('slider-track') || el.classList.contains('knob-body')) continue;
-      el.classList.toggle('overridden', on);
-      if (on) el.title = `Overridden: a cable is in the ${input.label} jack`;
-      else el.removeAttribute('title');
-    }
-  }
   for (const [id, el] of jacks) el.classList.toggle('driven', driven.has(id));
+  panelEl.classList.toggle('aux-patched', driven.has('pre.in'));
 }
 
 store.onAny((id, v) => {
@@ -75,41 +68,69 @@ store.onAny((id, v) => {
   scheduleSave();
 });
 
+// ------------------------------------------------------------------ fit the panel to the window
+function fitPanel() {
+  const avail = scaler.parentElement.clientWidth;
+  const natural = panelEl.offsetWidth;
+  const scale = Math.max(0.5, Math.min(1, avail / natural));
+  panelEl.style.transform = scale < 1 ? `scale(${scale})` : '';
+  scaler.style.height = `${Math.ceil(panelEl.offsetHeight * scale)}px`;
+  scaler.style.width = `${Math.ceil(natural * scale)}px`;
+  scaler.parentElement.classList.toggle('scrolls', natural * scale > avail + 1);
+  patchbay.refresh();
+}
+new ResizeObserver(fitPanel).observe(scaler.parentElement);
+window.addEventListener('resize', fitPanel);
+
 // ------------------------------------------------------------------ recipes
 let currentRecipe = null;
+let currentStep = 0;
+let modified = false;
 let applying = false;
 const presetSel = $('preset');
-for (const r of RECIPES) presetSel.append(h('option', { value: r.id }, `${r.num}. ${r.name}`));
+const groups = new Map();
+for (const r of RECIPES) {
+  if (!groups.has(r.group)) {
+    const g = h('optgroup', { label: r.group });
+    groups.set(r.group, g);
+    presetSel.append(g);
+  }
+  groups.get(r.group).append(h('option', { value: r.id }, `${r.num}. ${r.name}`));
+}
 presetSel.append(h('option', { value: '__custom', disabled: true }, 'custom'));
 
-function applyRecipe(id, { quiet = false } = {}) {
+function applyRecipe(id, { step = null, quiet = false } = {}) {
   const r = RECIPE_BY_ID[id];
   if (!r) return;
+  const st = r.steps ? (step ?? 0) : Infinity;
   applying = true;
   try {
-    store.setAll(recipeParams(r), { reset: true });
-    patchbay.load(r.cables);
+    store.setAll(recipeParams(r, st), { reset: true });
+    patchbay.load(recipeCables(r, st));
   } finally {
     applying = false;
   }
+  const sameRecipe = currentRecipe === id;
   currentRecipe = id;
+  currentStep = r.steps ? st : 0;
   modified = false;
   presetSel.value = id;
+  programCard.textContent = r.name;
   renderNotes();
-  if (host.running) {
+  // a new patch starts from a clean slate; stepping through a quick start doesn't
+  if (host.running && !(sameRecipe && r.steps && step !== null)) {
     host.fadeTo(0, 0.03);
     setTimeout(() => {
       host.send({ type: 'panic' });
       host.fadeTo(1, 0.35);
     }, 40);
   }
-  if (!quiet) announce(`Loaded ${r.name}`);
+  if (!quiet) announce(r.steps ? `${r.name}, step ${currentStep + 1}` : `Loaded ${r.name}`);
   scheduleSave();
 }
 
 presetSel.addEventListener('change', () => applyRecipe(presetSel.value));
 
-let modified = false;
 function markModified() {
   if (applying || !currentRecipe || modified) return;
   modified = true;
@@ -125,8 +146,7 @@ function renderNotes() {
   notesEl.hidden = !notesOpen || !r;
   notesToggle.setAttribute('aria-expanded', String(notesOpen && !!r));
   if (!r) return;
-  notesEl.replaceChildren(
-    ...[
+  const kids = [
     h(
       'div',
       { class: 'notes-head' },
@@ -136,16 +156,50 @@ function renderNotes() {
       modified ? h('span', { class: 'notes-mod' }, 'modified') : null,
       h('button', { type: 'button', class: 'notes-close', 'aria-label': 'Hide notes', onclick: () => setNotes(false) }, '×'),
     ),
-    h('p', {}, h('b', {}, 'Set: '), r.set),
-    h('p', {}, h('b', {}, 'Result: '), r.result),
-    r.tip ? h('p', { class: 'notes-tip' }, h('b', {}, 'Tip: '), r.tip) : null,
-    ].filter(Boolean),
-  );
+  ];
+  if (r.steps) {
+    const n = r.steps.length;
+    const go = (k) => applyRecipe(r.id, { step: Math.max(0, Math.min(n - 1, k)) });
+    kids.push(
+      h(
+        'div',
+        { class: 'steps' },
+        h('button', { type: 'button', class: 'tb', disabled: currentStep === 0, onclick: () => go(currentStep - 1), 'aria-label': 'Previous step' }, '‹ prev'),
+        h(
+          'ol',
+          { class: 'step-dots' },
+          r.steps.map((_, i) =>
+            h(
+              'li',
+              {},
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: i === currentStep ? 'current' : i < currentStep ? 'done' : '',
+                  'aria-label': `Step ${i + 1}`,
+                  'aria-current': i === currentStep ? 'step' : null,
+                  onclick: () => go(i),
+                },
+                i + 1,
+              ),
+            ),
+          ),
+        ),
+        h('button', { type: 'button', class: 'tb', disabled: currentStep === n - 1, onclick: () => go(currentStep + 1), 'aria-label': 'Next step' }, 'next ›'),
+      ),
+      h('p', { class: 'step-text' }, h('b', {}, `Step ${currentStep + 1}: `), r.steps[currentStep].text),
+    );
+    if (currentStep === n - 1) kids.push(h('p', {}, h('b', {}, 'Result: '), r.result));
+  } else {
+    kids.push(h('p', {}, h('b', {}, 'Set: '), r.set), h('p', {}, h('b', {}, 'Result: '), r.result));
+    if (r.tip) kids.push(h('p', { class: 'notes-tip' }, h('b', {}, 'Tip: '), r.tip));
+  }
+  notesEl.replaceChildren(...kids);
 }
 function setNotes(open) {
   notesOpen = open;
   renderNotes();
-  requestAnimationFrame(() => patchbay.refresh());
 }
 notesToggle.addEventListener('click', () => setNotes(!notesOpen));
 
@@ -156,7 +210,7 @@ function scheduleSave() {
   saveTimer = setTimeout(saveState, 300);
 }
 function currentState() {
-  return { v: 1, params: store.snapshot(), cables: patchbay.serialize(), recipe: currentRecipe, modified };
+  return { v: 2, params: store.snapshot(), cables: patchbay.serialize(), recipe: currentRecipe, step: currentStep, modified };
 }
 function saveState() {
   try {
@@ -166,7 +220,7 @@ function saveState() {
   }
 }
 function applyState(state) {
-  if (!state || typeof state !== 'object' || !state.params) return false;
+  if (!state || typeof state !== 'object' || !state.params || state.v !== 2) return false;
   applying = true;
   try {
     store.setAll(state.params, { reset: true });
@@ -175,8 +229,10 @@ function applyState(state) {
     applying = false;
   }
   currentRecipe = RECIPE_BY_ID[state.recipe] ? state.recipe : null;
+  currentStep = Number.isInteger(state.step) ? state.step : 0;
   modified = !!state.modified || !currentRecipe;
-  presetSel.value = currentRecipe && !modified ? currentRecipe : currentRecipe || '__custom';
+  presetSel.value = currentRecipe || '__custom';
+  programCard.textContent = currentRecipe ? RECIPE_BY_ID[currentRecipe].name : 'custom';
   renderNotes();
   return true;
 }
@@ -227,7 +283,7 @@ $('import-file').addEventListener('change', async (e) => {
     toast(`Loaded ${file.name}`);
     if (host.running) host.send({ type: 'panic' });
   } catch {
-    toast('That file is not an Easel patch.');
+    toast('That file is not a patch for this version of the Easel.');
   }
 });
 $('share').addEventListener('click', async () => {
@@ -310,7 +366,7 @@ powerBtn.addEventListener('click', async () => {
       document.body.classList.add('powered');
       if (!warned) {
         warned = true;
-        toast('Feedback patches can get loud quickly. Keep your volume low while you explore.', 5200);
+        toast('Feedback patches can get loud quickly. Keep the monitor level low while you explore.', 5200);
       }
     } catch (err) {
       console.error(err);
@@ -333,20 +389,18 @@ host.onMeters = (m) => {
   meters = m;
   if (m.recovered) toast('A loop blew up numerically; the engine reset itself.');
 };
-const shown = { pulse: 0 };
-function flash(el) {
-  if (el) shown.pulse = 1;
-}
+let pulseShown = 0;
 function frame() {
   const on = host.running;
   const m = on ? meters : null;
-  shown.pulse = Math.max(m?.pulse ?? 0, shown.pulse * 0.82);
-  setLed(leds.pulse, shown.pulse);
+  pulseShown = Math.max(m?.pulse ?? 0, oneFlash, pulseShown * 0.8);
+  oneFlash = 0;
+  setLed(leds.pulse, pulseShown);
   leds.stages.forEach((el, i) => setLed(el, m && m.stage === i ? 1 : 0));
   setLed(leds.env, m?.env ?? 0);
-  setLed(leds.r1, m?.r1 ?? 0);
-  setLed(leds.r2, m?.r2 ?? 0);
-  setLed(leds.det, m?.det ?? 0);
+  setLed(leds.rand, m?.rand ?? 0);
+  leds.randMeter.style.setProperty('--lvl', (m?.rand ?? 0).toFixed(3));
+  setLed(leds.det, m ? Math.min(1, m.det) : 0);
   setLed(leds.v1, m?.v1 ?? 0);
   setLed(leds.v2, m?.v2 ?? 0);
   setLed(leds.peak, m ? Math.min(1, m.peak * 1.4) : 0);
@@ -364,8 +418,9 @@ if (fromHash && applyState(fromHash)) {
 } else if (!applyState(loadSaved())) {
   applyRecipe(DEFAULT_RECIPE, { quiet: true });
 }
-markOverrides(currentNets);
-document.fonts?.ready.then(() => patchbay.refresh());
+markDriven(currentNets);
+fitPanel();
+document.fonts?.ready.then(fitPanel);
 
-// expose for debugging and tests
+// exposed for debugging and tests
 window.easel = { store, patchbay, host, applyRecipe, PARAM_BY_ID };

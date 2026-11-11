@@ -1,7 +1,10 @@
 // Panel controls. Every control reads and writes the Store, so presets,
-// loading and undo all flow through one place.
+// loading and step-through patches all flow through one place.
+//
+// The panel may be CSS-scaled to fit the window, so all pointer maths uses
+// client (on-screen) pixels from getBoundingClientRect().
 
-import { PARAM_BY_ID, BUS_SOURCES, JACK_BY_ID } from '../spec.js';
+import { PARAM_BY_ID, JACK_BY_ID, jackColor } from '../spec.js';
 import { formatParam, paramTitle } from './format.js';
 
 /** Minimal hyperscript. */
@@ -10,7 +13,12 @@ export function h(tag, attrs = {}, ...kids) {
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v == null || v === false) continue;
     if (k === 'class') el.className = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') {
+      for (const [prop, val] of Object.entries(v)) {
+        if (prop.startsWith('--')) el.style.setProperty(prop, String(val));
+        else el.style[prop] = val;
+      }
+    }
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
     else if (k === 'dataset') Object.assign(el.dataset, v);
     else el.setAttribute(k, v === true ? '' : v);
@@ -30,7 +38,7 @@ let readoutOwner = null;
 
 function readout() {
   if (!readoutEl) {
-    readoutEl = h('div', { class: 'readout', role: 'status', 'aria-live': 'off' });
+    readoutEl = h('div', { class: 'readout', 'aria-hidden': 'true' });
     document.body.append(readoutEl);
   }
   return readoutEl;
@@ -54,14 +62,14 @@ export function hideReadout(anchor) {
   if (readoutEl && (!anchor || anchor === readoutOwner)) readoutEl.classList.remove('visible');
 }
 
-function bindReadout(store, id, el, getAnchor = () => el) {
-  const show = () => showReadout(getAnchor(), paramTitle(id), formatParam(id, store.get(id), store.params));
+function bindReadout(store, id, el) {
+  const show = () => showReadout(el, paramTitle(id), formatParam(id, store.get(id), store.params));
   el.addEventListener('pointerenter', show);
   el.addEventListener('focus', show);
   el.addEventListener('pointerleave', () => {
-    if (!el.classList.contains('dragging')) hideReadout(getAnchor());
+    if (!el.classList.contains('dragging')) hideReadout(el);
   });
-  el.addEventListener('blur', () => hideReadout(getAnchor()));
+  el.addEventListener('blur', () => hideReadout(el));
   return show;
 }
 
@@ -142,17 +150,14 @@ function continuousInput(store, id, el, { travel, min, max, onJump }) {
 }
 
 function setAria(el, store, id, v) {
-  const p = PARAM_BY_ID[id];
   el.setAttribute('aria-valuenow', (v * 10).toFixed(1));
   el.setAttribute('aria-valuetext', formatParam(id, v, store.params));
-  if (p.bipolar) el.setAttribute('aria-valuemin', '-10');
 }
 
-/** Vertical slide pot, Easel style. */
-export function slider(store, id, { label, cls = '', size = 'md' } = {}) {
+/** Vertical slide pot. The cap colour comes from --cap on an ancestor. */
+export function slider(store, id, { label, cls = '' } = {}) {
   const p = PARAM_BY_ID[id];
   const cap = h('div', { class: 'slider-cap' });
-  const fill = h('div', { class: 'slider-fill' });
   const track = h(
     'div',
     {
@@ -165,17 +170,20 @@ export function slider(store, id, { label, cls = '', size = 'md' } = {}) {
       'aria-valuemax': '10',
       dataset: { param: id },
     },
-    h('div', { class: 'slider-scale' }),
-    h('div', { class: 'slider-slot' }, fill),
+    h('div', { class: 'slider-slot' }),
     cap,
   );
-  const travel = () => Math.max(20, track.clientHeight - cap.offsetHeight);
+  const travel = () => {
+    const t = track.getBoundingClientRect().height;
+    const c = cap.getBoundingClientRect().height;
+    return Math.max(10, t - c);
+  };
   const jump = (e) => {
     // clicking the slot (not the cap) moves the cap there first
     if (e.target === cap) return;
     const r = track.getBoundingClientRect();
-    const capH = cap.offsetHeight;
-    const v = 1 - (e.clientY - r.top - capH / 2) / (r.height - capH);
+    const c = cap.getBoundingClientRect().height;
+    const v = 1 - (e.clientY - r.top - c / 2) / (r.height - c);
     store.set(id, Math.min(1, Math.max(0, v)));
   };
   continuousInput(store, id, track, { travel, min: 0, max: 1, onJump: jump });
@@ -185,11 +193,16 @@ export function slider(store, id, { label, cls = '', size = 'md' } = {}) {
   };
   store.subscribe(id, update);
   update(store.get(id));
-  return h('div', { class: `ctl slider size-${size} ${cls}`, dataset: { param: id } }, track, h('label', { class: 'ctl-label' }, label ?? p.label));
+  return h(
+    'div',
+    { class: `ctl slider ${p.cv ? 'cv' : ''} ${cls}`, dataset: { param: id } },
+    track,
+    h('label', { class: 'ctl-label' }, label ?? (p.cv ? 'cv' : p.label)),
+  );
 }
 
-/** Small rotary knob. */
-export function knob(store, id, { label, cls = '' } = {}) {
+/** Rotary knob. size: 'sm' | 'md' | 'lg' | 'xl'. */
+export function knob(store, id, { label, cls = '', size = 'md', dial = false } = {}) {
   const p = PARAM_BY_ID[id];
   const min = p.bipolar ? -1 : 0;
   const body = h(
@@ -199,31 +212,44 @@ export function knob(store, id, { label, cls = '' } = {}) {
       role: 'slider',
       tabindex: '0',
       'aria-label': paramTitle(id),
-      'aria-valuemin': '0',
+      'aria-valuemin': p.bipolar ? '-10' : '0',
       'aria-valuemax': '10',
       dataset: { param: id },
     },
-    h('div', { class: 'knob-pointer' }),
+    h('div', { class: 'knob-skirt' }),
+    h('div', { class: 'knob-cap' }, h('div', { class: 'knob-pointer' })),
   );
   continuousInput(store, id, body, { travel: () => 160, min, max: 1 });
   const update = (v) => {
     const t = (v - min) / (1 - min);
-    body.style.setProperty('--angle', `${-135 + t * 270}deg`);
+    body.style.setProperty('--angle', `${-150 + t * 300}deg`);
     setAria(body, store, id, v);
   };
   store.subscribe(id, update);
   update(store.get(id));
+  const marks = dial
+    ? h(
+        'div',
+        { class: 'dial-marks', 'aria-hidden': 'true' },
+        Array.from({ length: 11 }, (_, i) => h('span', { style: { '--a': `${-150 + i * 30}deg` } }, i)),
+      )
+    : null;
   return h(
     'div',
-    { class: `ctl knob ${p.bipolar ? 'bipolar' : ''} ${cls}`, dataset: { param: id } },
-    body,
-    h('label', { class: 'ctl-label' }, label ?? p.label),
+    { class: `ctl knob size-${size} ${p.bipolar ? 'bipolar' : ''} ${cls}`, dataset: { param: id } },
+    h('div', { class: 'knob-wrap' }, marks, body),
+    label === null ? null : h('label', { class: 'ctl-label' }, label ?? p.label),
   );
 }
 
-/** Multi-position switch rendered as a column of lit option buttons. */
-export function switchCtl(store, id, { label, labels, cls = '', horizontal = false } = {}) {
+/**
+ * Bat-handle toggle switch with its positions printed beside it, as on the
+ * panel. Click a printed position (or the lever, to step through them).
+ * `icons` optionally replaces position labels with small SVG icons.
+ */
+export function toggleSwitch(store, id, { label, labels, icons, cls = '' } = {}) {
   const p = PARAM_BY_ID[id];
+  const n = p.options.length;
   const opts = p.options.map((o, i) =>
     h(
       'button',
@@ -232,33 +258,41 @@ export function switchCtl(store, id, { label, labels, cls = '', horizontal = fal
         class: 'sw-opt',
         role: 'radio',
         'aria-checked': 'false',
+        'aria-label': `${paramTitle(id)}: ${o}`,
         tabindex: '-1',
         onclick: () => store.set(id, i),
       },
-      h('i', { class: 'led' }),
-      h('span', {}, labels?.[i] ?? o),
+      icons?.[i] ? iconEl(icons[i]) : (labels?.[i] ?? o),
     ),
+  );
+  const lever = h(
+    'button',
+    {
+      type: 'button',
+      class: 'sw-lever',
+      tabindex: '-1',
+      'aria-hidden': 'true',
+      onclick: () => store.set(id, (store.get(id) + 1) % n),
+    },
+    h('i', { class: 'sw-nut' }),
+    h('i', { class: 'sw-bat' }),
   );
   const group = h(
     'div',
-    {
-      class: `sw-group ${horizontal ? 'horizontal' : ''}`,
-      role: 'radiogroup',
-      'aria-label': paramTitle(id),
-      dataset: { param: id },
-    },
-    opts,
+    { class: `sw-group positions-${n}`, role: 'radiogroup', 'aria-label': paramTitle(id), dataset: { param: id } },
+    lever,
+    h('div', { class: 'sw-opts' }, opts),
   );
   group.addEventListener('keydown', (e) => {
     const dir = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
     if (!dir) return;
     e.preventDefault();
-    const n = p.options.length;
-    const v = (store.get(id) + dir + n) % n;
+    const v = Math.min(n - 1, Math.max(0, store.get(id) + dir));
     store.set(id, v);
     opts[v].focus();
   });
   const update = (v) => {
+    group.style.setProperty('--pos', n === 1 ? 0 : v / (n - 1));
     opts.forEach((o, i) => {
       o.setAttribute('aria-checked', String(i === v));
       o.tabIndex = i === v ? 0 : -1;
@@ -266,81 +300,37 @@ export function switchCtl(store, id, { label, labels, cls = '', horizontal = fal
   };
   store.subscribe(id, update);
   update(store.get(id));
-  const lab = label === null ? null : h('span', { class: 'ctl-label sw-title' }, label ?? p.label);
-  return h('div', { class: `ctl switch ${cls}`, dataset: { param: id } }, lab, group);
+  return h(
+    'div',
+    { class: `ctl switch ${cls}`, dataset: { param: id } },
+    group,
+    label === null ? null : h('span', { class: 'ctl-label sw-title' }, label ?? p.label),
+  );
 }
 
-/** Two-state toggle (sequencer per-stage pulse switches). Option 0 is "on". */
-export function toggle(store, id, { label } = {}) {
+/** Small mini-toggle for the sequencer pulse switches (option 0 is "on"). */
+export function pulseToggle(store, id) {
   const btn = h(
     'button',
     {
       type: 'button',
-      class: 'toggle',
+      class: 'mini-toggle',
       'aria-label': paramTitle(id),
       onclick: () => store.set(id, store.get(id) === 0 ? 1 : 0),
       dataset: { param: id },
     },
-    h('i', { class: 'toggle-lever' }),
+    h('i', { class: 'sw-nut' }),
+    h('i', { class: 'sw-bat' }),
   );
   const update = (v) => btn.setAttribute('aria-pressed', String(v === 0));
   store.subscribe(id, update);
   update(store.get(id));
-  return h('div', { class: 'ctl toggle-ctl' }, btn, label ? h('span', { class: 'ctl-label' }, label) : null);
-}
-
-/** Control-bus source selector: five colour-coded dots. */
-export function busSelect(store, id) {
-  const dots = BUS_SOURCES.map((s, i) =>
-    h('button', {
-      type: 'button',
-      class: `bus-dot c-${s.color}`,
-      role: 'radio',
-      'aria-checked': 'false',
-      'aria-label': s.name,
-      title: s.name,
-      tabindex: '-1',
-      onclick: () => store.set(id, i),
-    }),
-  );
-  const group = h(
-    'div',
-    { class: 'bus', role: 'radiogroup', 'aria-label': paramTitle(id), dataset: { param: id } },
-    dots,
-  );
-  group.addEventListener('keydown', (e) => {
-    const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-    if (!dir) return;
-    e.preventDefault();
-    const n = BUS_SOURCES.length;
-    const v = (store.get(id) + dir + n) % n;
-    store.set(id, v);
-    dots[v].focus();
-  });
-  const show = bindReadout(store, id, group);
-  const update = (v) => {
-    dots.forEach((d, i) => {
-      d.setAttribute('aria-checked', String(i === v));
-      d.tabIndex = i === v ? 0 : -1;
-    });
-    if (group.matches(':hover')) show();
-  };
-  store.subscribe(id, update);
-  update(store.get(id));
-  return group;
-}
-
-/** Mod-depth slider with its bus selector underneath. */
-export function modSlider(store, depthId, srcId, opts = {}) {
-  const s = slider(store, depthId, { ...opts, cls: `mod ${opts.cls ?? ''}` });
-  s.insertBefore(busSelect(store, srcId), s.querySelector('.ctl-label'));
-  s.dataset.src = srcId;
-  return s;
+  return btn;
 }
 
 /** Panel LED. Level set via setLed(). */
 export function led(color, { label, cls = '' } = {}) {
-  const el = h('i', { class: `led panel-led c-${color} ${cls}`, 'aria-hidden': 'true' });
+  const el = h('i', { class: `led c-${color} ${cls}`, 'aria-hidden': 'true' });
   return label ? h('span', { class: 'led-wrap' }, el, h('span', { class: 'ctl-label' }, label)) : el;
 }
 
@@ -349,14 +339,41 @@ export function setLed(el, level) {
   el.style.setProperty('--lvl', v.toFixed(3));
 }
 
-/** Banana jack. */
-export function jack(id, { label } = {}) {
+/** Banana or Tini-Jax jack. */
+export function jack(id, { label, cls = '' } = {}) {
   const j = JACK_BY_ID[id];
+  const name = label ?? j.label;
   const btn = h('button', {
     type: 'button',
-    class: `jack ${j.dir} kind-${j.kind} c-${j.module}`,
-    'aria-label': `${j.dir === 'out' ? 'Output' : 'Input'} jack: ${label ?? j.label}`,
+    class: `jack ${j.dir} ${j.type} c-${jackColor(j)}`,
+    'aria-label': `${j.dir === 'out' ? 'Output' : 'Input'}: ${name}${j.type === 'tiny' ? ' (Tini-Jax)' : ''}`,
+    title: j.note || undefined,
     dataset: { jack: id },
   });
-  return h('div', { class: `jack-wrap ${j.dir}` }, btn, h('span', { class: 'jack-label' }, label ?? j.label));
+  return h('div', { class: `jack-wrap ${j.dir} ${j.type} ${cls}` }, btn, name ? h('span', { class: 'jack-label' }, name) : null);
+}
+
+// ---------------------------------------------------------------------------
+// Little line icons printed on the panel (waveshapes etc.)
+// ---------------------------------------------------------------------------
+const ICONS = {
+  saw: 'M1 9 L7 2 L7 9 L13 2 L13 9 L19 2 L19 9',
+  square: 'M1 9 L1 2 L5 2 L5 9 L9 9 L9 2 L13 2 L13 9 L17 9 L17 2 L19 2',
+  tri: 'M1 9 L4.5 2 L8 9 L11.5 2 L15 9 L18.5 2',
+  sine: 'M1 5.5 C3 0 5 0 7 5.5 C9 11 11 11 13 5.5 C15 0 17 0 19 5.5',
+  spike: 'M1 9 L3 9 L3.6 1.5 L4.2 9 L7 9 L7.6 1.5 L8.2 9 L11 9 L11.6 1.5 L12.2 9 L15 9 L15.6 1.5 L16.2 9 L19 9',
+};
+
+export function iconEl(name) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 20 11');
+  svg.setAttribute('class', `icon icon-${name}`);
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', ICONS[name] || '');
+  svg.append(path);
+  const wrap = h('span', { class: 'icon-wrap' });
+  wrap.append(svg, h('span', { class: 'sr-only' }, name));
+  return wrap;
 }

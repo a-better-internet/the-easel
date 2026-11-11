@@ -1,18 +1,18 @@
 // Human-readable values for the floating read-out.
 
-import { curves, PARAM_BY_ID, BUS_SOURCES, MODULES } from '../spec.js';
+import { curves, PARAM_BY_ID, MODULES } from '../spec.js';
 
 const MODULE_NAMES = {
-  pulser: 'Pulser',
   seq: 'Sequencer',
-  env: 'Envelope',
   rand: 'Random',
-  pre: 'Preamp',
-  inv: 'Inverter',
+  env: 'Envelope',
+  pulser: 'Pulser',
   mo: 'Mod osc',
   co: 'Complex osc',
+  lpg: 'Lo pass gate',
   lpg1: 'Gate 1',
   lpg2: 'Gate 2',
+  pre: 'Preamp',
   out: 'Output',
 };
 
@@ -48,39 +48,36 @@ export function paramTitle(id) {
 export function formatParam(id, v, params = {}) {
   const p = PARAM_BY_ID[id];
   if (!p) return String(v);
-  if (p.type === 'bus') return BUS_SOURCES[v]?.name ?? String(v);
   if (p.type === 'switch' || p.type === 'toggle') return p.options[v] ?? String(v);
 
   const ten = (v * 10).toFixed(1);
+  if (p.cv) return `${ten} · cv amount`;
   switch (id) {
     case 'pulser.period': {
-      const s = curves.pulserPeriod(v);
-      return `${ten} · ${fmtTime(s)} (${fmtHz(1 / s)})`;
+      const s = curves.time(v);
+      return `${fmtTime(s)} (${fmtHz(1 / s)})`;
     }
     case 'env.attack':
     case 'env.sustain':
     case 'env.decay':
-      return `${ten} · ${fmtTime(curves.envTime(v))}`;
+      return fmtTime(curves.time(v));
     case 'mo.freq': {
-      const f = (params['mo.range'] === 1 ? curves.moLow(v) : curves.moHigh(v)) * curves.fine(params['mo.fine'] ?? 0);
-      return `${ten} · ${fmtHz(f)}`;
+      const f = (params['mo.range'] === 1 ? curves.moLow(v) : curves.pitch(v)) * curves.fine(params['mo.fine'] ?? 0);
+      return fmtHz(f);
     }
     case 'co.pitch': {
-      const f = curves.coFreq(v) * curves.fine(params['co.fine'] ?? 0);
-      return `${ten} · ${fmtHz(f)} · ${noteName(f)}`;
+      const f = curves.pitch(v) * curves.fine(params['co.fine'] ?? 0);
+      return `${fmtHz(f)} · ${noteName(f)}`;
     }
     case 'mo.fine':
     case 'co.fine':
       return `${v >= 0 ? '+' : ''}${(v * 6).toFixed(2)} semitones`;
-    case 'pre.gain':
-      return `${ten} · ×${curves.preGain(v).toFixed(2)}`;
-    case 'pre.speed':
-      return `${ten} · release ${fmtTime(curves.detRelease(v))}`;
-    case 'rand.slew': {
-      const s = curves.randSlew(v);
-      return s === 0 ? `${ten} · stepped` : `${ten} · glide ${fmtTime(s)}`;
+    case 'co.shape': {
+      const wave = PARAM_BY_ID['co.wave'].options[params['co.wave'] ?? 0];
+      return v < 0.005 ? 'sine' : `sine → ${wave} ${Math.round(v * 100)}%`;
     }
-    case 'out.master': {
+    case 'out.master':
+    case 'out.monitor': {
       const g = curves.master(v);
       return `${ten} · ${g > 0 ? (20 * Math.log10(g)).toFixed(1) : '−∞'} dB`;
     }

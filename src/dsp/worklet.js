@@ -28,8 +28,8 @@ class EaselProcessor extends AudioWorkletProcessor {
         case 'patch':
           this.engine.setPatch(msg.nets || []);
           break;
-        case 'kick':
-          this.engine.kick();
+        case 'one':
+          this.engine.one();
           break;
         case 'panic':
           this.engine.reset();

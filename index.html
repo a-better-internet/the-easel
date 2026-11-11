@@ -25,7 +25,7 @@
         <span class="brand-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         <span class="brand-text">
           <strong>the easel</strong>
-          <span>208 · no-input · internal feedback</span>
+          <span>208C · no-input · internal feedback</span>
         </span>
       </div>
 
@@ -69,20 +69,25 @@
     <section id="notes" class="notes" aria-live="polite"></section>
 
     <main class="case">
-      <div id="panel" class="panel"></div>
+      <div class="panel-viewport">
+        <div id="panel-scaler" class="panel-scaler">
+          <div id="panel" class="panel"></div>
+        </div>
+      </div>
       <p class="hints">
+        <span><b>black</b> jacks are inputs, <b>coloured</b> jacks outputs</span>
         <span><b>drag</b> jack → jack</span>
+        <span>neighbours join with a <b>shorting bar</b></span>
         <span><b>drop on a plug</b> to stack it</span>
         <span><b>drag a plug</b> away to unplug</span>
-        <span><b>shift-click</b> a cable or plug to delete</span>
+        <span><b>shift-click</b> to delete</span>
         <span><b>click</b> two jacks to patch</span>
         <span><b>double-click</b> a control to reset</span>
-        <span><b>shift-drag</b> for fine moves</span>
       </p>
     </main>
 
     <footer class="foot">
-      An independent, unofficial homage to the Music Easel's 208 section, built for no-input playing. Not affiliated with Buchla USA.
+      An independent, unofficial homage to the Music Easel's 208C sound source, built for no-input playing. Not affiliated with Buchla USA.
     </footer>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -96,23 +101,30 @@
         Easel routes back into itself. Turn on <b>power</b>, pick a <b>patch</b>, then change one thing at a time.
       </p>
 
+      <h3>Reading the panel</h3>
+      <ul>
+        <li><b>Black</b> banana jacks are inputs. <b>Coloured</b> banana jacks are outputs, coloured by source: <span class="key c-seq">blue</span> sequencer, <span class="key c-env">orange</span> envelope, <span class="key c-pulser">yellow</span> pulser, <span class="key c-rand">white</span> random, <span class="key c-mo">green</span> mod osc out, <span class="key c-blue">blue</span> inverter and envelope-detector outputs. Sources repeat across the jack field so one is always next to a CV input.</li>
+        <li>Audio uses the small silver <b>Tini-Jax</b> jacks: f.m. in, m.osc, c.osc, gate1 in, aux in / nse, gate2 sig and master out.</li>
+        <li>Each modulated parameter has a <b>CV slider</b> beside its main slider, with its black input jack underneath. The CV slider sets how much of whatever you patch in reaches the parameter.</li>
+        <li>Times are printed <b>.002 s at the top</b> to 10 s at the bottom: sliders (and positive CV) push things faster.</li>
+      </ul>
+
       <h3>Patching</h3>
       <ul>
         <li><b>Drag</b> from any jack to any other jack. West-coast rules: anything can go anywhere.</li>
+        <li>Patch two <b>neighbouring</b> banana jacks and you get a <b>shorting bar</b>, the quickest way to send a source into the CV input beside it.</li>
         <li><b>Banana stacking:</b> drop a cable on a plug that's already in a jack and it stacks on top. The new plug inherits that jack, so stacking is how you send one output to many places, or mix several outputs into one input.</li>
         <li>Outputs that share a stack (a <i>net</i>) mix passively. Each input on the net hears that mix.</li>
         <li><b>Drag a plug</b> to pull it out and move it. Drop it on empty panel to remove the cable. <b>Alt/Option-drag</b> a plug to start a new cable stacked on it.</li>
         <li><b>Shift-click</b> a plug, or hold Shift and click a cable, to delete it. Double-tap a plug on touch screens.</li>
         <li><b>Click a jack, then another</b> to patch without dragging. With the keyboard, Tab to a jack, press Enter, then Enter on the destination. Delete pulls the top plug.</li>
-        <li>A cable in an input jack overrides that input's internal switch or bus source. The overridden selector dims.</li>
       </ul>
 
-      <h3>The control bus</h3>
+      <h3>Starting out</h3>
       <p>
-        Each <i>mod</i> slider sets how much one internal source reaches its destination. The dots under it pick the source:
-        <span class="key c-seq">seq</span> sequencer voltage, <span class="key c-pulser">puls</span> pulser ramp,
-        <span class="key c-env">env</span> envelope, <span class="key c-rand">rand</span> random 1,
-        <span class="key c-det">det</span> envelope detector.
+        <b>Quick Start Patch A</b> and <b>B</b> walk through the 208C Quick Start Guide one step at a time: use
+        <i>next</i> in the notes bar and listen to what each connection does. The numbered patches are the no-input
+        recipes, each built around one or more feedback loops.
       </p>
 
       <h3>Feedback loops</h3>
@@ -121,12 +133,12 @@
           <tr><th>Loop</th><th>Path</th><th>Character</th><th>Control it with</th></tr>
         </thead>
         <tbody>
-          <tr><td>A · audio-rate cross-mod</td><td>c.o. out → m.o. f.m. in; m.o. FMs c.o.</td><td>thick detune → metallic → chaotic noise</td><td>f.m. in knob, index, oscillator ratio</td></tr>
-          <tr><td>B · loudness</td><td>mix out → preamp → env det → timbre / index / gate</td><td>slow, breathing self-regulation</td><td>preamp gain, mod depth, inverter</td></tr>
-          <tr><td>C · audio re-entry</td><td>mix out → preamp → gate 2 (src: pre)</td><td>no-input-mixer ringing and howls</td><td>preamp gain (keep it low), gate level, mode</td></tr>
-          <tr><td>D · timing</td><td>pulser → sequencer → pulser period</td><td>uneven, self-defining rhythms</td><td>stage sliders, period mod depth</td></tr>
-          <tr><td>E · contour</td><td>env out → its own A/S/D cv, or pulser period</td><td>accelerating / decelerating cycles</td><td>env time-cv knob</td></tr>
-          <tr><td>F · phase</td><td>gate 1 → gate 2 (src: g1 −, inverted)</td><td>hollow, highpassed tones</td><td>relative gate levels</td></tr>
+          <tr><td>A · audio-rate cross-mod</td><td>c.osc → f.m. in; m.o. f.m.s the c.o.</td><td>thick detune → metallic → chaotic noise</td><td>f.m. in knob, modulation, oscillator ratio</td></tr>
+          <tr><td>B · loudness</td><td>master out → aux in → env out → timbre / modulation / level CV</td><td>slow, breathing self-regulation</td><td>gain switch, CV slider, inverter</td></tr>
+          <tr><td>C · audio re-entry</td><td>master out → aux in → gate 2 (source: aux / nse)</td><td>no-input-mixer ringing and howls</td><td>channel B (keep it low), level 2, mode</td></tr>
+          <tr><td>D · timing</td><td>pulser → sequencer → pulser period CV</td><td>uneven, self-defining rhythms</td><td>stage sliders, period CV slider</td></tr>
+          <tr><td>E · contour</td><td>envelope out → its own attack / st. / decay CV, or pulser period</td><td>accelerating / decelerating cycles</td><td>the time sliders</td></tr>
+          <tr><td>F · phase</td><td>gate 2 source: gate 1 − (inverted)</td><td>hollow, highpassed tones</td><td>relative gate levels</td></tr>
         </tbody>
       </table>
       <p>
@@ -137,11 +149,12 @@
 
       <h3>Gain staging &amp; safety</h3>
       <ul>
-        <li><b>Start silent.</b> Bring master and preamp gain up from zero. Audio re-entry loops can jump from silence to full level.</li>
+        <li><b>Start silent.</b> Keep the monitor level low and bring loop gain (channel B, master) up from zero. Audio re-entry loops can jump from silence to full level.</li>
         <li>Use headphones with care while setting up audio loops. A runaway loop can hold a piercing tone.</li>
         <li>Find the point where a loop starts, then back off slightly. The most interesting zone is just below where it locks.</li>
         <li>If a control loop runs away, reach for the inverter first, then reduce the mod depth.</li>
-        <li><b>reset</b> clears every oscillator, filter and loop state. The output always passes a DC blocker and a limiter.</li>
+        <li><b>master volume</b> sets the level at the master out jacks, so it is part of any loop you patch from there. <b>monitor level</b> is what you hear.</li>
+        <li><b>reset</b> clears every oscillator, filter and loop state. What you hear always passes a DC blocker and a limiter.</li>
       </ul>
 
       <h3>Keys</h3>
