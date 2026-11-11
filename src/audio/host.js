@@ -9,6 +9,8 @@ export class AudioHost {
     this.out = null;
     this.onMeters = null;
     this.onError = null;
+    this.onRecChunk = null;
+    this.onRecEnd = null;
     this.oversample = 2;
     this.starting = null;
   }
@@ -113,6 +115,8 @@ export class AudioHost {
   onMessage(msg) {
     if (!msg) return;
     if (msg.type === 'meters') this.onMeters?.(msg.m);
+    else if (msg.type === 'rec-chunk') this.onRecChunk?.(msg.id, msg.samples);
+    else if (msg.type === 'rec-end') this.onRecEnd?.(msg.id);
     else if (msg.type === 'error') this.onError?.(msg.message);
   }
 }

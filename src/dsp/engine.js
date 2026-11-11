@@ -263,6 +263,8 @@ export class EaselEngine {
     // output
     this.dcXL = 0;
     this.dcYL = 0;
+    this.dcXT = 0;
+    this.dcYT = 0;
     this.limEnv = 0;
     this.reverb.reset();
     if (this.decA) {
@@ -597,8 +599,12 @@ export class EaselEngine {
   }
 
   // ---------------------------------------------------------------- block
-  /** Render `frames` samples into outL/outR (Float32Array). */
-  process(outL, outR, frames) {
+  /**
+   * Render `frames` samples into outL/outR (Float32Array).
+   * If `tap` is given it receives master out (DC-blocked, not limited, independent
+   * of the monitor level): the line-level signal a recording should capture.
+   */
+  process(outL, outR, frames, tap = null) {
     const pv = this.pv;
     const pt = this.pt;
     const cont = this.continuous;
@@ -644,6 +650,12 @@ export class EaselEngine {
       // master out: the jacks you patch back into the Easel (line level, soft-clipped)
       const master = softclip(mix * curves.master(pv[OUT_MASTER]));
       O[S_MIX] = master;
+      if (tap) {
+        const t = master - this.dcXT + 0.9995 * this.dcYT; // its own DC blocker
+        this.dcXT = master;
+        this.dcYT = t;
+        tap[n] = t;
+      }
 
       // monitor: what the browser plays
       let L = master * curves.master(pv[OUT_MONITOR]);
@@ -667,6 +679,7 @@ export class EaselEngine {
         this.reset();
         m.recovered = 1;
         L = 0;
+        if (tap) tap[n] = 0;
       }
       outL[n] = L;
       outR[n] = L;

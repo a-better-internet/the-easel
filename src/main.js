@@ -2,6 +2,7 @@ import { Store } from './state.js';
 import { buildPanel } from './ui/panel.js';
 import { Patchbay } from './ui/patchbay.js';
 import { AudioHost } from './audio/host.js';
+import { Recorder, formatDuration, formatBytes, formatPeak } from './audio/recorder.js';
 import { Scope } from './ui/scope.js';
 import { setLed, h } from './ui/controls.js';
 import { RECIPES, RECIPE_BY_ID, recipeParams, recipeCables } from './patch/recipes.js';
@@ -348,6 +349,7 @@ help.addEventListener('click', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'c' || e.key === 'C') setCableMode(cableMode + 1);
+  else if ((e.key === 'r' || e.key === 'R') && !e.repeat) recorder.recording ? stopRecording() : startRecording();
   else if (e.key === '?') help.open ? help.close() : help.showModal();
 });
 
@@ -355,29 +357,108 @@ window.addEventListener('keydown', (e) => {
 const powerBtn = $('power');
 const scope = new Scope($('scope'));
 let warned = false;
-powerBtn.addEventListener('click', async () => {
-  const on = powerBtn.getAttribute('aria-pressed') !== 'true';
-  if (on) {
-    powerBtn.classList.add('busy');
-    try {
-      await host.start(() => ({ params: store.snapshot(), nets: currentNets }));
-      scope.attach(host.analyser);
-      powerBtn.setAttribute('aria-pressed', 'true');
-      document.body.classList.add('powered');
-      if (!warned) {
-        warned = true;
-        toast('Feedback patches can get loud quickly. Keep the monitor level low while you explore.', 5200);
-      }
-    } catch (err) {
-      console.error(err);
-      toast(`Audio could not start: ${err.message || err}`, 7000);
-    } finally {
-      powerBtn.classList.remove('busy');
+
+async function powerOn() {
+  if (host.running) return true;
+  powerBtn.classList.add('busy');
+  try {
+    await host.start(() => ({ params: store.snapshot(), nets: currentNets }));
+    scope.attach(host.analyser);
+    powerBtn.setAttribute('aria-pressed', 'true');
+    document.body.classList.add('powered');
+    if (!warned) {
+      warned = true;
+      toast('Feedback patches can get loud quickly. Keep the monitor level low while you explore.', 5200);
     }
-  } else {
-    await host.stop();
-    powerBtn.setAttribute('aria-pressed', 'false');
-    document.body.classList.remove('powered');
+    return true;
+  } catch (err) {
+    console.error(err);
+    toast(`Audio could not start: ${err.message || err}`, 7000);
+    return false;
+  } finally {
+    powerBtn.classList.remove('busy');
+  }
+}
+
+async function powerOff() {
+  if (recorder.recording) await stopRecording(); // save the take before the audio stops
+  await host.stop();
+  powerBtn.setAttribute('aria-pressed', 'false');
+  document.body.classList.remove('powered');
+}
+
+powerBtn.addEventListener('click', () => (powerBtn.getAttribute('aria-pressed') === 'true' ? powerOff() : powerOn()));
+
+// ------------------------------------------------------------------ recorder (24-bit WAV)
+const recorder = new Recorder(host);
+const recBtn = $('rec');
+const recStatus = $('rec-status');
+const recSource = $('rec-source');
+let lastTakeUrl = null;
+
+function recName() {
+  return currentRecipe ? `${RECIPE_BY_ID[currentRecipe].name}${modified ? ' (modified)' : ''}` : 'custom patch';
+}
+
+function showRecProgress(t) {
+  const peak = formatPeak(t.peak);
+  recStatus.className = 'rec-status live';
+  recStatus.replaceChildren(
+    `${formatDuration(t.frames / t.sampleRate)} · ${formatBytes(t.bytes)} · `,
+    h('span', { class: t.peak >= 0.989 ? 'hot' : '' }, `peak ${peak}`),
+  );
+}
+
+async function startRecording() {
+  if (!(await powerOn())) return;
+  try {
+    recorder.start({ source: recSource.value, name: recName() });
+  } catch (err) {
+    toast(err.message || String(err));
+    return;
+  }
+  if (lastTakeUrl) {
+    URL.revokeObjectURL(lastTakeUrl);
+    lastTakeUrl = null;
+  }
+  recBtn.setAttribute('aria-pressed', 'true');
+  recSource.disabled = true;
+  recStatus.className = 'rec-status live';
+  recStatus.textContent = '00:00:00 · 0 KB';
+  announce('Recording');
+}
+
+async function stopRecording() {
+  if (!recorder.recording) return;
+  recBtn.setAttribute('aria-pressed', 'false');
+  recSource.disabled = false;
+  recStatus.className = 'rec-status';
+  recStatus.textContent = 'saving…';
+  try {
+    const take = await recorder.stop();
+    lastTakeUrl = URL.createObjectURL(take.blob);
+    const link = h('a', { href: lastTakeUrl, download: take.filename, title: `${take.filename} · ${take.sampleRate} Hz · 24-bit · mono` }, `${formatDuration(take.seconds)} take`);
+    recStatus.replaceChildren(link, ` · ${formatBytes(take.blob.size)}`);
+    link.click(); // download it now; the link stays for another copy
+    toast(`Saved ${take.filename}: 24-bit / ${take.sampleRate / 1000} kHz mono, peak ${formatPeak(take.peak)}.`, 6000);
+    announce('Recording saved');
+  } catch (err) {
+    console.error(err);
+    recStatus.textContent = 'recording failed';
+    toast(`Recording failed: ${err.message || err}`, 6000);
+  }
+}
+
+recorder.onProgress = showRecProgress;
+recorder.onLimit = () => {
+  toast('The take reached the WAV size limit (about 4 GB) and was saved.', 7000);
+  stopRecording();
+};
+recBtn.addEventListener('click', () => (recorder.recording ? stopRecording() : startRecording()));
+window.addEventListener('beforeunload', (e) => {
+  if (recorder.recording) {
+    e.preventDefault();
+    e.returnValue = '';
   }
 });
 
@@ -423,4 +504,4 @@ fitPanel();
 document.fonts?.ready.then(fitPanel);
 
 // exposed for debugging and tests
-window.easel = { store, patchbay, host, applyRecipe, PARAM_BY_ID };
+window.easel = { store, patchbay, host, recorder, applyRecipe, PARAM_BY_ID };

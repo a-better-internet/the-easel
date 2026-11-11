@@ -33,6 +33,17 @@
         <i class="power-led" aria-hidden="true"></i><span>power</span>
       </button>
 
+      <div class="recorder" role="group" aria-label="Recorder">
+        <button id="rec" class="rec-btn" type="button" aria-pressed="false" title="Record a 24-bit WAV (R)">
+          <i class="rec-dot" aria-hidden="true"></i><span>rec</span>
+        </button>
+        <span id="rec-status" class="rec-status">24-bit wav</span>
+        <select id="rec-source" class="rec-source" aria-label="Record from" title="What to record">
+          <option value="master">master out</option>
+          <option value="monitor">monitor</option>
+        </select>
+      </div>
+
       <label class="field">
         <span>patch</span>
         <select id="preset" aria-label="Patch recipe"></select>
@@ -157,8 +168,16 @@
         <li><b>reset</b> clears every oscillator, filter and loop state. What you hear always passes a DC blocker and a limiter.</li>
       </ul>
 
+      <h3>Recording</h3>
+      <ul>
+        <li><b>rec</b> records a <b>24-bit WAV</b> at the audio device's sample rate (usually 44.1 or 48 kHz), mono like the instrument. Press it again to stop; the file downloads, and stays linked beside the button until your next take.</li>
+        <li>Record from <b>master out</b> (the default): the line-level mix, DC-blocked, unaffected by the monitor knob and never touched by the output limiter. Set the level with <b>master volume</b> and watch the peak read-out. Or record from <b>monitor</b>: exactly what you hear, limiter included.</li>
+        <li>Audio is captured inside the engine, sample for sample, before the browser's output stage, and converted to 24 bits with TPDF dither.</li>
+        <li>Turning the power off stops the take and saves it. A take can run for hours (the WAV format tops out near 4 GB, about 8 hours at 48 kHz).</li>
+      </ul>
+
       <h3>Keys</h3>
-      <p><span class="key">C</span> cable visibility · <span class="key">?</span> this help · <span class="key">Esc</span> cancel patching · arrows / PgUp / PgDn adjust a focused control</p>
+      <p><span class="key">R</span> record / stop · <span class="key">C</span> cable visibility · <span class="key">?</span> this help · <span class="key">Esc</span> cancel patching · arrows / PgUp / PgDn adjust a focused control</p>
     </dialog>
   </body>
 </html>

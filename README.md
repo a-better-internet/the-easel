@@ -69,6 +69,30 @@ about half size it scrolls sideways.
   and master volume (the level at the master out jacks, so it's part of any
   loop you patch from there).
 
+## Recording
+
+**rec** (or **R**) records a **24-bit PCM WAV**. Press it again to stop, and
+the file downloads. A link to the take stays beside the button until your next
+recording, in case the browser blocked the download.
+
+- **Format:** mono, like the instrument's mix, at the audio device's sample
+  rate (usually 44.1 or 48 kHz).
+- **Metadata:** the file carries a RIFF INFO chunk with the patch name, the
+  software and the date. It is named after the patch and time, e.g.
+  `easel-howl-box-20261111-213045.wav`.
+- **Source: master out** (default). This is the line-level mix: DC-blocked,
+  independent of the monitor knob, and never touched by the output limiter.
+  Set the recording level with **master volume** and watch the live peak
+  read-out (it turns red at full scale).
+- **Source: monitor.** Exactly what you hear, limiter included.
+- **Capture:** audio is captured inside the AudioWorklet, sample for sample,
+  before the browser's output stage. Each chunk is converted to 24-bit right
+  away with TPDF dither (±1 LSB) and kept as a Blob, so long takes don't pile
+  up in memory.
+- **Length:** takes can run for hours. The WAV size field caps a file near
+  4 GB (about 8 hours at 48 kHz), and the recorder saves automatically there.
+  Switching the power off also stops and saves the take.
+
 ## Patching
 
 - **Black** banana jacks are inputs. **Coloured** banana jacks are outputs.
@@ -117,6 +141,8 @@ src/dsp/engine.js     the whole 208C as one per-sample engine
 src/dsp/blocks.js     soft clipper, PolyBLEP, decimator, spring reverb
 src/dsp/worklet.js    AudioWorkletProcessor wrapper (all messages in try/catch)
 src/audio/host.js     AudioContext, worklet node, analyser, fades
+src/audio/recorder.js 24-bit WAV recorder (chunks from the worklet -> PCM Blob parts)
+src/audio/wav.js      24-bit PCM encoding with TPDF dither, WAV header + INFO chunk
 src/patch/graph.js    cables, banana stacks, nets
 src/patch/recipes.js  quick-start patches and no-input recipes
 src/ui/*.js           panel, controls, patchbay (SVG cables), scope, read-outs
@@ -145,6 +171,7 @@ setting.
 | Preamp / detector | AC-coupled gain (low / high) into a soft clipper; white noise when aux in is empty; average-rectifying follower |
 | Spring reverb | two recirculating delays, each through stretched first-order allpasses (the chirp) and damping |
 | Output | master out (soft-clipped) × monitor level → DC blocker → peak limiter → soft clip; NaN/Inf triggers an automatic state reset |
+| Recorder tap | master out → its own DC blocker → worklet → 24-bit PCM (or the monitor signal itself) |
 
 ## Interpretation notes
 
