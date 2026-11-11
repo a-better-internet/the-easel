@@ -1,0 +1,14 @@
+{
+  "name": "the-easel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser-based, no-input Music Easel (208 section) with internal feedback patching and banana-plug stacking.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

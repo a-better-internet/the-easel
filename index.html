@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Easel · no-input</title>
+    <meta
+      name="description"
+      content="A browser-based, no-input Music Easel: the 208 sound source with self-clocking control, internal feedback loops and stackable banana-plug patching. No keyboard, nothing played."
+    />
+    <meta name="theme-color" content="#16120f" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ebe5d6'/%3E%3Crect x='4' y='6' width='5' height='20' rx='2' fill='%23d9b02b'/%3E%3Crect x='10.5' y='6' width='5' height='20' rx='2' fill='%232f6db1'/%3E%3Crect x='17' y='6' width='5' height='20' rx='2' fill='%23e07a28'/%3E%3Crect x='23.5' y='6' width='5' height='20' rx='2' fill='%23b5442a'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+    />
+    <link rel="stylesheet" href="styles/easel.css" />
+    <script type="module" src="src/main.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="brand-text">
+          <strong>the easel</strong>
+          <span>208 · no-input · internal feedback</span>
+        </span>
+      </div>
+
+      <button id="power" class="power" type="button" aria-pressed="false" title="Start / stop audio">
+        <i class="power-led" aria-hidden="true"></i><span>power</span>
+      </button>
+
+      <label class="field">
+        <span>patch</span>
+        <select id="preset" aria-label="Patch recipe"></select>
+      </label>
+
+      <div class="tools" role="toolbar" aria-label="Patch tools">
+        <button id="notes-toggle" type="button" class="tb" aria-expanded="true" title="Show the recipe notes">notes</button>
+        <button id="cables-mode" type="button" class="tb" title="Cable visibility (C)">cables: solid</button>
+        <button id="clear" type="button" class="tb" title="Pull every cable">pull all</button>
+        <button id="panic" type="button" class="tb warn" title="Reset every loop and oscillator (Esc twice)">reset</button>
+        <details class="menu">
+          <summary class="tb">file</summary>
+          <div class="menu-pop">
+            <button id="export" type="button">Export patch (.json)</button>
+            <button id="import" type="button">Import patch…</button>
+            <button id="share" type="button">Copy share link</button>
+            <input id="import-file" type="file" accept="application/json,.json" hidden />
+          </div>
+        </details>
+        <label class="field compact">
+          <span>quality</span>
+          <select id="quality" aria-label="Oversampling">
+            <option value="1">1×</option>
+            <option value="2" selected>2×</option>
+            <option value="4">4×</option>
+          </select>
+        </label>
+        <button id="help-btn" type="button" class="tb" title="How to play (?)">?</button>
+      </div>
+
+      <canvas id="scope" class="scope" aria-label="Output oscilloscope" role="img"></canvas>
+    </header>
+
+    <section id="notes" class="notes" aria-live="polite"></section>
+
+    <main class="case">
+      <div id="panel" class="panel"></div>
+      <p class="hints">
+        <span><b>drag</b> jack → jack</span>
+        <span><b>drop on a plug</b> to stack it</span>
+        <span><b>drag a plug</b> away to unplug</span>
+        <span><b>shift-click</b> a cable or plug to delete</span>
+        <span><b>click</b> two jacks to patch</span>
+        <span><b>double-click</b> a control to reset</span>
+        <span><b>shift-drag</b> for fine moves</span>
+      </p>
+    </main>
+
+    <footer class="foot">
+      An independent, unofficial homage to the Music Easel's 208 section, built for no-input playing. Not affiliated with Buchla USA.
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="announcer" class="sr-only" aria-live="polite"></div>
+
+    <dialog id="help" class="help" aria-labelledby="help-title">
+      <form method="dialog" class="help-close"><button type="submit" aria-label="Close help">×</button></form>
+      <h2 id="help-title">Playing an Easel that plays itself</h2>
+      <p>
+        Nothing here is played from a keyboard. Every sound comes from self-oscillation, self-clocking, and signals the
+        Easel routes back into itself. Turn on <b>power</b>, pick a <b>patch</b>, then change one thing at a time.
+      </p>
+
+      <h3>Patching</h3>
+      <ul>
+        <li><b>Drag</b> from any jack to any other jack. West-coast rules: anything can go anywhere.</li>
+        <li><b>Banana stacking:</b> drop a cable on a plug that's already in a jack and it stacks on top. The new plug inherits that jack, so stacking is how you send one output to many places, or mix several outputs into one input.</li>
+        <li>Outputs that share a stack (a <i>net</i>) mix passively. Each input on the net hears that mix.</li>
+        <li><b>Drag a plug</b> to pull it out and move it. Drop it on empty panel to remove the cable. <b>Alt/Option-drag</b> a plug to start a new cable stacked on it.</li>
+        <li><b>Shift-click</b> a plug, or hold Shift and click a cable, to delete it. Double-tap a plug on touch screens.</li>
+        <li><b>Click a jack, then another</b> to patch without dragging. With the keyboard, Tab to a jack, press Enter, then Enter on the destination. Delete pulls the top plug.</li>
+        <li>A cable in an input jack overrides that input's internal switch or bus source. The overridden selector dims.</li>
+      </ul>
+
+      <h3>The control bus</h3>
+      <p>
+        Each <i>mod</i> slider sets how much one internal source reaches its destination. The dots under it pick the source:
+        <span class="key c-seq">seq</span> sequencer voltage, <span class="key c-pulser">puls</span> pulser ramp,
+        <span class="key c-env">env</span> envelope, <span class="key c-rand">rand</span> random 1,
+        <span class="key c-det">det</span> envelope detector.
+      </p>
+
+      <h3>Feedback loops</h3>
+      <table>
+        <thead>
+          <tr><th>Loop</th><th>Path</th><th>Character</th><th>Control it with</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>A · audio-rate cross-mod</td><td>c.o. out → m.o. f.m. in; m.o. FMs c.o.</td><td>thick detune → metallic → chaotic noise</td><td>f.m. in knob, index, oscillator ratio</td></tr>
+          <tr><td>B · loudness</td><td>mix out → preamp → env det → timbre / index / gate</td><td>slow, breathing self-regulation</td><td>preamp gain, mod depth, inverter</td></tr>
+          <tr><td>C · audio re-entry</td><td>mix out → preamp → gate 2 (src: pre)</td><td>no-input-mixer ringing and howls</td><td>preamp gain (keep it low), gate level, mode</td></tr>
+          <tr><td>D · timing</td><td>pulser → sequencer → pulser period</td><td>uneven, self-defining rhythms</td><td>stage sliders, period mod depth</td></tr>
+          <tr><td>E · contour</td><td>env out → its own A/S/D cv, or pulser period</td><td>accelerating / decelerating cycles</td><td>env time-cv knob</td></tr>
+          <tr><td>F · phase</td><td>gate 1 → gate 2 (src: g1 −, inverted)</td><td>hollow, highpassed tones</td><td>relative gate levels</td></tr>
+        </tbody>
+      </table>
+      <p>
+        A loop is <b>positive</b> when the return pushes the same way (it runs to an extreme, then saturates or locks), and
+        <b>negative</b> when it opposes the change (it settles and hovers). Patching the return through the
+        <b>inverter</b> flips one into the other. The most musical results usually sit near the boundary.
+      </p>
+
+      <h3>Gain staging &amp; safety</h3>
+      <ul>
+        <li><b>Start silent.</b> Bring master and preamp gain up from zero. Audio re-entry loops can jump from silence to full level.</li>
+        <li>Use headphones with care while setting up audio loops. A runaway loop can hold a piercing tone.</li>
+        <li>Find the point where a loop starts, then back off slightly. The most interesting zone is just below where it locks.</li>
+        <li>If a control loop runs away, reach for the inverter first, then reduce the mod depth.</li>
+        <li><b>reset</b> clears every oscillator, filter and loop state. The output always passes a DC blocker and a limiter.</li>
+      </ul>
+
+      <h3>Keys</h3>
+      <p><span class="key">C</span> cable visibility · <span class="key">?</span> this help · <span class="key">Esc</span> cancel patching · arrows / PgUp / PgDn adjust a focused control</p>
+    </dialog>
+  </body>
+</html>
