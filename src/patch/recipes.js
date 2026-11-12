@@ -10,25 +10,11 @@
 //   'name'      switch option by its panel label
 // Cables are [from, to] jack pairs; neighbouring jacks draw as shorting bars.
 
-import { PARAM_BY_ID, defaultParams, curves } from '../spec.js';
+import { defaultParams, curves } from '../spec.js';
+import { s, hz, lowHz, resolveValue } from './values.js';
+import { PATCHED } from './patched.js';
 
-const tag = (kind, value) => ({ kind, value });
-export const s = (seconds) => tag('time', seconds);
-export const hz = (f) => tag('pitch', f);
-export const lowHz = (f) => tag('moLow', f);
-
-/** Invert a monotonic curve by bisection. */
-function invert(fn, target) {
-  let lo = -0.75;
-  let hi = 1.75;
-  const rising = fn(hi) > fn(lo);
-  for (let i = 0; i < 60; i++) {
-    const mid = (lo + hi) / 2;
-    if (fn(mid) < target === rising) lo = mid;
-    else hi = mid;
-  }
-  return Math.min(1, Math.max(0, (lo + hi) / 2));
-}
+export { s, hz, lowHz };
 
 // Breathing Drone: tune the m.o. just above twice the c.o. so the FM beats slowly.
 const DRONE_PITCH = 0.3;
@@ -447,22 +433,9 @@ export const RECIPES = [
   },
 ];
 
-export const RECIPE_BY_ID = Object.fromEntries(RECIPES.map((r) => [r.id, r]));
+RECIPES.push(...PATCHED);
 
-function resolve(recipe, id, raw, values) {
-  const p = PARAM_BY_ID[id];
-  if (!p) throw new Error(`recipe ${recipe.id}: unknown param ${id}`);
-  if (raw && typeof raw === 'object') {
-    if (raw.kind === 'time') return invert(curves.time, raw.value);
-    if (raw.kind === 'pitch') return invert(curves.pitch, raw.value);
-    if (raw.kind === 'moLow') return invert(curves.moLow, raw.value);
-    throw new Error(`recipe ${recipe.id}: bad value for ${id}`);
-  }
-  if (p.type === 'slider' || p.type === 'knob') return raw / 10;
-  const i = p.options.indexOf(String(raw));
-  if (i < 0) throw new Error(`recipe ${recipe.id}: ${id} has no option ${raw}`);
-  return i;
-}
+export const RECIPE_BY_ID = Object.fromEntries(RECIPES.map((r) => [r.id, r]));
 
 /**
  * Engine param values for a recipe, optionally only up to step `step`
@@ -472,7 +445,7 @@ export function recipeParams(recipe, step = Infinity) {
   const values = defaultParams();
   const layers = [recipe.params || {}];
   (recipe.steps || []).slice(0, Math.max(0, step) + 1).forEach((st) => layers.push(st.params || {}));
-  for (const layer of layers) for (const [id, raw] of Object.entries(layer)) values[id] = resolve(recipe, id, raw, values);
+  for (const layer of layers) for (const [id, raw] of Object.entries(layer)) values[id] = resolveValue(`patch ${recipe.id}`, id, raw);
   return values;
 }
 

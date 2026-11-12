@@ -57,8 +57,10 @@
         <details class="menu">
           <summary class="tb">file</summary>
           <div class="menu-pop">
+            <button id="save-preset" type="button">Save as preset…</button>
             <button id="export" type="button">Export patch (.json)</button>
-            <button id="import" type="button">Import patch…</button>
+            <button id="export-presets" type="button">Export my presets (.json)</button>
+            <button id="import" type="button">Import patch or presets…</button>
             <button id="share" type="button">Copy share link</button>
             <input id="import-file" type="file" accept="application/json,.json" hidden />
           </div>
@@ -100,6 +102,25 @@
     <footer class="foot">
       An independent, unofficial homage to the Music Easel's 208C sound source, built for no-input playing. Not affiliated with Buchla USA.
     </footer>
+
+    <dialog id="save-dialog" class="save-dialog" aria-labelledby="save-title">
+      <form id="save-form" method="dialog">
+        <h2 id="save-title">Save as preset</h2>
+        <label class="save-field">
+          <span>Name</span>
+          <input id="save-name" name="name" maxlength="60" required autocomplete="off" />
+        </label>
+        <label class="save-field">
+          <span>Notes <i>(optional: what to listen for, what to try)</i></span>
+          <textarea id="save-notes" name="notes" rows="4" maxlength="2000"></textarea>
+        </label>
+        <p id="save-hint" class="save-hint"></p>
+        <div class="save-buttons">
+          <button type="submit" value="cancel" formnovalidate class="tb">Cancel</button>
+          <button type="submit" value="save" class="tb primary">Save preset</button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <div id="announcer" class="sr-only" aria-live="polite"></div>
@@ -166,6 +187,13 @@
         <li>If a control loop runs away, reach for the inverter first, then reduce the mod depth.</li>
         <li><b>master volume</b> sets the level at the master out jacks, so it is part of any loop you patch from there. <b>monitor level</b> is what you hear.</li>
         <li><b>reset</b> clears every oscillator, filter and loop state. What you hear always passes a DC blocker and a limiter.</li>
+      </ul>
+
+      <h3>Presets</h3>
+      <ul>
+        <li>The <b>patched</b> presets (P1–P12) are each built around a cable technique: fan-out stacking, mixing two sources into one input, the inverter, off-ext clocking, swapping the gates, Tini-Jax audio loops, detector loops and envelope self-patching.</li>
+        <li>The <b>patch sheet</b> beside the notes lists every connection in the current patch. Hover a line to light up that cable.</li>
+        <li><b>save as preset…</b> keeps the whole patch, cables included, under <i>my presets</i> in the patch menu. Saving under an existing name replaces it. <b>file › export my presets</b> backs them all up to one file; <b>import</b> brings them back.</li>
       </ul>
 
       <h3>Recording</h3>

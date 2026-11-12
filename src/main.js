@@ -6,7 +6,8 @@ import { Recorder, formatDuration, formatBytes, formatPeak } from './audio/recor
 import { Scope } from './ui/scope.js';
 import { setLed, h } from './ui/controls.js';
 import { RECIPES, RECIPE_BY_ID, recipeParams, recipeCables } from './patch/recipes.js';
-import { PARAM_BY_ID } from './spec.js';
+import { loadUserPresets, saveUserPresets, upsertPreset, removePreset, findByName, isUserPresetId } from './patch/user-presets.js';
+import { PARAM_BY_ID, jackName } from './spec.js';
 
 const STORAGE_KEY = 'the-easel/state/v2';
 const DEFAULT_RECIPE = 'bell-garden';
@@ -51,6 +52,7 @@ const patchbay = new Patchbay({
     host.setPatch(nets);
     markDriven(nets);
     markModified();
+    renderSheet();
     scheduleSave();
   },
 });
@@ -83,34 +85,69 @@ function fitPanel() {
 new ResizeObserver(fitPanel).observe(scaler.parentElement);
 window.addEventListener('resize', fitPanel);
 
-// ------------------------------------------------------------------ recipes
-let currentRecipe = null;
+// ------------------------------------------------------------------ presets (built-in + mine)
+let currentRecipe = null; // a built-in recipe id or a user preset id
 let currentStep = 0;
 let modified = false;
 let applying = false;
+let userPresets = loadUserPresets(safeStorage());
 const presetSel = $('preset');
-const groups = new Map();
-for (const r of RECIPES) {
-  if (!groups.has(r.group)) {
-    const g = h('optgroup', { label: r.group });
-    groups.set(r.group, g);
-    presetSel.append(g);
-  }
-  groups.get(r.group).append(h('option', { value: r.id }, `${r.num}. ${r.name}`));
-}
-presetSel.append(h('option', { value: '__custom', disabled: true }, 'custom'));
 
-function applyRecipe(id, { step = null, quiet = false } = {}) {
-  const r = RECIPE_BY_ID[id];
-  if (!r) return;
-  const st = r.steps ? (step ?? 0) : Infinity;
+function safeStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+const userPreset = (id) => userPresets.find((p) => p.id === id) || null;
+const presetName = (id) => RECIPE_BY_ID[id]?.name ?? userPreset(id)?.name ?? null;
+
+function buildPresetMenu() {
+  presetSel.replaceChildren();
+  const groups = new Map();
+  for (const r of RECIPES) {
+    if (!groups.has(r.group)) {
+      const g = h('optgroup', { label: r.group });
+      groups.set(r.group, g);
+      presetSel.append(g);
+    }
+    groups.get(r.group).append(h('option', { value: r.id }, `${r.num}. ${r.name}`));
+  }
+  if (userPresets.length) {
+    presetSel.append(h('optgroup', { label: 'my presets' }, userPresets.map((p) => h('option', { value: p.id }, p.name))));
+  }
+  presetSel.append(h('option', { value: '__custom', disabled: true }, 'custom'));
+  presetSel.value = currentRecipe && presetName(currentRecipe) ? currentRecipe : '__custom';
+}
+
+/** Start a newly loaded patch from a clean slate (stepping a quick start doesn't). */
+function freshStart() {
+  if (!host.running) return;
+  host.fadeTo(0, 0.03);
+  setTimeout(() => {
+    host.send({ type: 'panic' });
+    host.fadeTo(1, 0.35);
+  }, 40);
+}
+
+function loadPatch(params, cables) {
   applying = true;
   try {
-    store.setAll(recipeParams(r, st), { reset: true });
-    patchbay.load(recipeCables(r, st));
+    store.setAll(params, { reset: true });
+    patchbay.load(cables);
   } finally {
     applying = false;
   }
+}
+
+function applyRecipe(id, { step = null, quiet = false } = {}) {
+  if (isUserPresetId(id)) return applyUserPreset(id, { quiet });
+  const r = RECIPE_BY_ID[id];
+  if (!r) return;
+  const st = r.steps ? (step ?? 0) : Infinity;
+  loadPatch(recipeParams(r, st), recipeCables(r, st));
   const sameRecipe = currentRecipe === id;
   currentRecipe = id;
   currentStep = r.steps ? st : 0;
@@ -118,85 +155,223 @@ function applyRecipe(id, { step = null, quiet = false } = {}) {
   presetSel.value = id;
   programCard.textContent = r.name;
   renderNotes();
-  // a new patch starts from a clean slate; stepping through a quick start doesn't
-  if (host.running && !(sameRecipe && r.steps && step !== null)) {
-    host.fadeTo(0, 0.03);
-    setTimeout(() => {
-      host.send({ type: 'panic' });
-      host.fadeTo(1, 0.35);
-    }, 40);
-  }
+  if (!(sameRecipe && r.steps && step !== null)) freshStart();
   if (!quiet) announce(r.steps ? `${r.name}, step ${currentStep + 1}` : `Loaded ${r.name}`);
+  scheduleSave();
+}
+
+function applyUserPreset(id, { quiet = false } = {}) {
+  const p = userPreset(id);
+  if (!p) return;
+  loadPatch(p.state.params, p.state.cables);
+  currentRecipe = id;
+  currentStep = 0;
+  modified = false;
+  presetSel.value = id;
+  programCard.textContent = p.name;
+  renderNotes();
+  freshStart();
+  if (!quiet) announce(`Loaded ${p.name}`);
   scheduleSave();
 }
 
 presetSel.addEventListener('change', () => applyRecipe(presetSel.value));
 
 function markModified() {
-  if (applying || !currentRecipe || modified) return;
+  if (applying || modified) return;
   modified = true;
-  renderNotes();
+  if (currentRecipe) renderNotes();
 }
 
-// ------------------------------------------------------------------ notes
+// ------------------------------------------------------------------ saving my presets
+const saveDialog = $('save-dialog');
+const saveName = $('save-name');
+const saveNotes = $('save-notes');
+const saveHint = $('save-hint');
+
+function persistUserPresets() {
+  if (!saveUserPresets(safeStorage(), userPresets)) {
+    toast('This browser would not store the preset (private browsing?). Use file › export to keep it.', 6000);
+    return false;
+  }
+  return true;
+}
+
+function openSaveDialog() {
+  closeMenus();
+  const mine = userPreset(currentRecipe);
+  const base = presetName(currentRecipe);
+  saveName.value = mine ? mine.name : base ? `${base} (variation)` : '';
+  saveNotes.value = mine ? mine.notes : '';
+  updateSaveHint();
+  saveDialog.showModal();
+  saveName.select();
+}
+
+function updateSaveHint() {
+  const existing = findByName(userPresets, saveName.value);
+  saveHint.textContent = existing ? `Replaces your preset “${existing.name}”.` : 'Saves every knob, switch, slider and cable.';
+}
+saveName.addEventListener('input', updateSaveHint);
+
+function savePreset(name, notes) {
+  try {
+    const based = isUserPresetId(currentRecipe) ? userPreset(currentRecipe)?.based : currentRecipe;
+    const { list, preset, replaced } = upsertPreset(userPresets, { name, notes, state: currentState(), based });
+    userPresets = list;
+    if (!persistUserPresets()) return;
+    currentRecipe = preset.id;
+    currentStep = 0;
+    modified = false;
+    buildPresetMenu();
+    programCard.textContent = preset.name;
+    renderNotes();
+    scheduleSave();
+    toast(`${replaced ? 'Updated' : 'Saved'} “${preset.name}” in my presets.`);
+  } catch (err) {
+    toast(err.message || String(err));
+  }
+}
+
+$('save-form').addEventListener('submit', (e) => {
+  if (e.submitter?.value !== 'save') return; // cancel just closes
+  savePreset(saveName.value, saveNotes.value);
+});
+
+function updateCurrentPreset() {
+  const p = userPreset(currentRecipe);
+  if (p) savePreset(p.name, p.notes);
+}
+
+function deleteCurrentPreset() {
+  const p = userPreset(currentRecipe);
+  if (!p || !window.confirm(`Delete “${p.name}” from my presets? The patch stays loaded.`)) return;
+  userPresets = removePreset(userPresets, p.id);
+  persistUserPresets();
+  currentRecipe = null;
+  modified = true;
+  buildPresetMenu();
+  programCard.textContent = 'custom';
+  renderNotes();
+  scheduleSave();
+  toast(`Deleted “${p.name}”.`);
+}
+
+// ------------------------------------------------------------------ notes + patch sheet
 const notesEl = $('notes');
 const notesToggle = $('notes-toggle');
 let notesOpen = true;
+let sheetEl = null;
+
+const KIND = { bar: 'shorting bar', tini: 'Tini-Jax', cable: 'cable' };
+
+function renderSheet() {
+  if (!sheetEl) return;
+  const rows = patchbay.describe();
+  sheetEl.replaceChildren(
+    h('h3', { class: 'sheet-title' }, 'patch sheet', h('span', { class: 'sheet-count' }, rows.length ? `${rows.length} connection${rows.length > 1 ? 's' : ''}` : '')),
+    rows.length
+      ? h(
+          'ul',
+          { class: 'sheet-list' },
+          rows.map((r) => {
+            const hot = (on) => () => patchbay.setHot(r.id, on);
+            return h(
+              'li',
+              { tabindex: '0', onpointerenter: hot(true), onpointerleave: hot(false), onfocus: hot(true), onblur: hot(false) },
+              h('i', { class: `swatch kind-${r.style}`, style: { '--cc': r.color } }),
+              h('span', { class: 'from' }, jackName(r.from)),
+              h('span', { class: 'arrow', 'aria-label': 'to' }, '→'),
+              h('span', { class: 'to' }, jackName(r.to)),
+              h('span', { class: 'kind' }, `${KIND[r.style] || 'cable'}${r.stacked ? ' · stacked' : ''}`),
+            );
+          }),
+        )
+      : h('p', { class: 'sheet-empty' }, 'No cables: everything you hear is wired inside the instrument.'),
+  );
+}
+
+function notesActions() {
+  const mine = userPreset(currentRecipe);
+  return h(
+    'div',
+    { class: 'notes-actions' },
+    h('button', { type: 'button', class: 'tb', onclick: openSaveDialog }, 'save as preset…'),
+    mine && modified ? h('button', { type: 'button', class: 'tb', onclick: updateCurrentPreset }, `update “${mine.name}”`) : null,
+    mine ? h('button', { type: 'button', class: 'tb warn', onclick: deleteCurrentPreset }, 'delete preset') : null,
+  );
+}
+
 function renderNotes() {
+  notesEl.hidden = !notesOpen;
+  notesToggle.setAttribute('aria-expanded', String(notesOpen));
+  if (!notesOpen) return;
   const r = RECIPE_BY_ID[currentRecipe];
-  notesEl.hidden = !notesOpen || !r;
-  notesToggle.setAttribute('aria-expanded', String(notesOpen && !!r));
-  if (!r) return;
-  const kids = [
+  const mine = userPreset(currentRecipe);
+  const close = h('button', { type: 'button', class: 'notes-close', 'aria-label': 'Hide notes', onclick: () => setNotes(false) }, '×');
+  const head = (num, name, tag) =>
     h(
       'div',
       { class: 'notes-head' },
-      h('span', { class: 'notes-num' }, r.num),
-      h('h2', {}, r.name),
-      h('span', { class: 'notes-loops' }, r.loops),
+      num != null ? h('span', { class: 'notes-num' }, num) : null,
+      h('h2', {}, name),
+      tag ? h('span', { class: 'notes-loops' }, tag) : null,
       modified ? h('span', { class: 'notes-mod' }, 'modified') : null,
-      h('button', { type: 'button', class: 'notes-close', 'aria-label': 'Hide notes', onclick: () => setNotes(false) }, '×'),
-    ),
-  ];
-  if (r.steps) {
-    const n = r.steps.length;
-    const go = (k) => applyRecipe(r.id, { step: Math.max(0, Math.min(n - 1, k)) });
-    kids.push(
-      h(
-        'div',
-        { class: 'steps' },
-        h('button', { type: 'button', class: 'tb', disabled: currentStep === 0, onclick: () => go(currentStep - 1), 'aria-label': 'Previous step' }, '‹ prev'),
+      close,
+    );
+  const main = [];
+  if (r) {
+    main.push(head(r.num, r.name, r.loops));
+    if (r.steps) {
+      const n = r.steps.length;
+      const go = (k) => applyRecipe(r.id, { step: Math.max(0, Math.min(n - 1, k)) });
+      main.push(
         h(
-          'ol',
-          { class: 'step-dots' },
-          r.steps.map((_, i) =>
-            h(
-              'li',
-              {},
+          'div',
+          { class: 'steps' },
+          h('button', { type: 'button', class: 'tb', disabled: currentStep === 0, onclick: () => go(currentStep - 1), 'aria-label': 'Previous step' }, '‹ prev'),
+          h(
+            'ol',
+            { class: 'step-dots' },
+            r.steps.map((_, i) =>
               h(
-                'button',
-                {
-                  type: 'button',
-                  class: i === currentStep ? 'current' : i < currentStep ? 'done' : '',
-                  'aria-label': `Step ${i + 1}`,
-                  'aria-current': i === currentStep ? 'step' : null,
-                  onclick: () => go(i),
-                },
-                i + 1,
+                'li',
+                {},
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: i === currentStep ? 'current' : i < currentStep ? 'done' : '',
+                    'aria-label': `Step ${i + 1}`,
+                    'aria-current': i === currentStep ? 'step' : null,
+                    onclick: () => go(i),
+                  },
+                  i + 1,
+                ),
               ),
             ),
           ),
+          h('button', { type: 'button', class: 'tb', disabled: currentStep === n - 1, onclick: () => go(currentStep + 1), 'aria-label': 'Next step' }, 'next ›'),
         ),
-        h('button', { type: 'button', class: 'tb', disabled: currentStep === n - 1, onclick: () => go(currentStep + 1), 'aria-label': 'Next step' }, 'next ›'),
-      ),
-      h('p', { class: 'step-text' }, h('b', {}, `Step ${currentStep + 1}: `), r.steps[currentStep].text),
-    );
-    if (currentStep === n - 1) kids.push(h('p', {}, h('b', {}, 'Result: '), r.result));
+        h('p', { class: 'step-text' }, h('b', {}, `Step ${currentStep + 1}: `), r.steps[currentStep].text),
+      );
+      if (currentStep === n - 1) main.push(h('p', {}, h('b', {}, 'Result: '), r.result));
+    } else {
+      main.push(h('p', {}, h('b', {}, 'Set: '), r.set), h('p', {}, h('b', {}, 'Result: '), r.result));
+      if (r.tip) main.push(h('p', { class: 'notes-tip' }, h('b', {}, 'Tip: '), r.tip));
+    }
+  } else if (mine) {
+    main.push(head('★', mine.name, 'my preset'));
+    if (mine.notes) main.push(h('p', { class: 'user-notes' }, mine.notes));
+    const based = presetName(mine.based);
+    main.push(h('p', { class: 'notes-tip' }, `${based ? `Based on ${based}. ` : ''}Saved ${new Date(mine.updated).toLocaleString()}.`));
   } else {
-    kids.push(h('p', {}, h('b', {}, 'Set: '), r.set), h('p', {}, h('b', {}, 'Result: '), r.result));
-    if (r.tip) kids.push(h('p', { class: 'notes-tip' }, h('b', {}, 'Tip: '), r.tip));
+    main.push(head(null, 'Custom patch', null), h('p', { class: 'notes-tip' }, 'Not saved as a preset yet. Save it to keep the cables and settings in the patch menu.'));
   }
-  notesEl.replaceChildren(...kids);
+  main.push(notesActions());
+  sheetEl = h('aside', { class: 'sheet', 'aria-label': 'Patch sheet' });
+  notesEl.replaceChildren(h('div', { class: 'notes-main' }, main), sheetEl);
+  renderSheet();
 }
 function setNotes(open) {
   notesOpen = open;
@@ -222,18 +397,12 @@ function saveState() {
 }
 function applyState(state) {
   if (!state || typeof state !== 'object' || !state.params || state.v !== 2) return false;
-  applying = true;
-  try {
-    store.setAll(state.params, { reset: true });
-    patchbay.load(state.cables || []);
-  } finally {
-    applying = false;
-  }
-  currentRecipe = RECIPE_BY_ID[state.recipe] ? state.recipe : null;
+  loadPatch(state.params, state.cables || []);
+  currentRecipe = presetName(state.recipe) ? state.recipe : null;
   currentStep = Number.isInteger(state.step) ? state.step : 0;
   modified = !!state.modified || !currentRecipe;
-  presetSel.value = currentRecipe || '__custom';
-  programCard.textContent = currentRecipe ? RECIPE_BY_ID[currentRecipe].name : 'custom';
+  buildPresetMenu();
+  programCard.textContent = currentRecipe ? presetName(currentRecipe) : 'custom';
   renderNotes();
   return true;
 }
@@ -272,6 +441,42 @@ $('export').addEventListener('click', () => {
   }, 0);
   closeMenus();
 });
+$('save-preset').addEventListener('click', openSaveDialog);
+$('export-presets').addEventListener('click', () => {
+  closeMenus();
+  if (!userPresets.length) {
+    toast('No presets saved yet: use “save as preset…” first.');
+    return;
+  }
+  const blob = new Blob([JSON.stringify({ v: 1, kind: 'easel-presets', presets: userPresets }, null, 2)], { type: 'application/json' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: 'easel-my-presets.json' });
+  document.body.append(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }, 0);
+});
+
+/** Merge an exported preset bundle into my presets (same names are replaced). */
+function importPresetBundle(bundle) {
+  let n = 0;
+  for (const p of bundle.presets) {
+    try {
+      userPresets = upsertPreset(userPresets, { name: p.name, notes: p.notes, state: p.state, based: p.based }).list;
+      n++;
+    } catch {
+      /* skip anything malformed */
+    }
+  }
+  if (n) {
+    persistUserPresets();
+    buildPresetMenu();
+    renderNotes();
+  }
+  return n;
+}
+
 $('import').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
@@ -280,6 +485,11 @@ $('import-file').addEventListener('change', async (e) => {
   if (!file) return;
   try {
     const state = JSON.parse(await file.text());
+    if (state && Array.isArray(state.presets)) {
+      const n = importPresetBundle(state);
+      toast(n ? `Imported ${n} preset${n > 1 ? 's' : ''} into my presets.` : 'No presets in that file.');
+      return;
+    }
     if (!applyState(state)) throw new Error('not a patch');
     toast(`Loaded ${file.name}`);
     if (host.running) host.send({ type: 'panic' });
@@ -492,6 +702,7 @@ function frame() {
 requestAnimationFrame(frame);
 
 // ------------------------------------------------------------------ boot
+buildPresetMenu();
 const fromHash = stateFromHash();
 if (fromHash && applyState(fromHash)) {
   history.replaceState(null, '', location.pathname + location.search);

@@ -127,9 +127,39 @@ recording, in case the browser blocked the download.
   6. Noise Weather (preamp empty)
   7. Ring Clock (loops D + A)
   8. Long-Form Steering
+- **P1–P12: patched presets.** Each one is built around a cable technique,
+  not just a knob setting.
 
-Your patch autosaves in the browser, including the quick-start step you're
-on. The **file** menu exports and imports JSON or copies a share link.
+| | Preset | Technique | What's patched |
+| --- | --- | --- | --- |
+| P1 | Stacked Fan-Out | banana stacking, one output → three inputs | sequencer → pitch, timbre and m.o. freq, all stacked on one jack |
+| P2 | Contrary Motion | inverter | sequencer → pitch, and through the inverter → m.o. freq |
+| P3 | Mixed Voltages | two outputs stacked into one input | sequencer + random → pitch; envelope + pulser → level 1 |
+| P4 | Off-Ext Clockwork | pulser off-ext (loops D + E) | envelope drives the pulser; sequencer sets the envelope's decay |
+| P5 | Pumping Drone | inverter as a sidechain | pulser pings gate 2, and ducks gate 1 through the inverter |
+| P6 | Ringing Filter | Tini-Jax audio loop | gate2 sig → aux in: gate 2 rings on its own feedback when pinged |
+| P7 | Gate Swap | gate1 in / aux in re-routing | m.osc → gate1 in, c.osc → aux in: two independently gated voices |
+| P8 | Detector Swell | positive loop B + an LFO in the same net | master out → aux in; detector + m.o. mod out → timbre and level 1 |
+| P9 | Wobble Fan | mod out stacked three ways | LFO → timbre, w.s. and level 2 (noise) |
+| P10 | Bleep Generator | sample & hold FM | random → m.o. freq and modulation; sequencer → pitch |
+| P11 | Accelerando | envelope self-patching (loop E) | envelope → its own attack and decay CVs and the pulser period |
+| P12 | Feedback Melody | loop C played by the sequencer | master out → aux in; sequencer → level 2 sets each note's pitch |
+
+**Patch sheet.** Beside the notes, the patch sheet lists every connection in
+the current patch: source → destination, plus whether it's a shorting bar,
+cable or Tini-Jax cable, and whether it's stacked. It updates as you patch,
+and hovering a line lights that cable on the panel.
+
+**My presets.** *save as preset…* (in the notes bar or the **file** menu)
+saves the whole patch, cables included, with a name and optional notes. It
+appears under *my presets* in the patch menu. Saving under an existing name
+replaces that preset. A loaded preset can be **updated** after you change it,
+or **deleted**. *file › export my presets* backs them all up to one JSON file,
+and *import* merges a backup (or loads a single exported patch).
+
+Your current patch also autosaves in the browser, including the quick-start
+step you're on. The **file** menu exports and imports single patches or copies
+a share link.
 
 ## How it's built
 
@@ -145,6 +175,9 @@ src/audio/recorder.js 24-bit WAV recorder (chunks from the worklet -> PCM Blob p
 src/audio/wav.js      24-bit PCM encoding with TPDF dither, WAV header + INFO chunk
 src/patch/graph.js    cables, banana stacks, nets
 src/patch/recipes.js  quick-start patches and no-input recipes
+src/patch/patched.js  the cable-technique presets P1-P12
+src/patch/values.js   value notation for patches (s(), hz(), lowHz())
+src/patch/user-presets.js  my presets: named patches in localStorage
 src/ui/*.js           panel, controls, patchbay (SVG cables), scope, read-outs
 src/main.js           wiring, scaling, persistence, step-through notes
 tests/                node:test suites

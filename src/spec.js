@@ -280,6 +280,46 @@ export const JACKS = [...OUTPUTS, ...INPUTS];
 export const JACK_BY_ID = Object.freeze(Object.fromEntries(JACKS.map((j) => [j.id, j])));
 export const IN_INDEX = Object.freeze(Object.fromEntries(INPUTS.map((j, i) => [j.id, i])));
 
+// Readable names for patch sheets and announcements.
+const SIGNAL_NAMES = {
+  seq: 'sequencer',
+  env: 'envelope',
+  pulser: 'pulser',
+  rand: 'random',
+  'pre.env': 'env out (detector)',
+  inv: 'inverter out',
+  'mo.mod': 'm.o. mod out',
+  mo: 'm.osc',
+  co: 'c.osc',
+  lpg2: 'gate2 sig',
+  mix: 'master out',
+};
+const INPUT_NAMES = {
+  'mo.freqIn': 'm.o. freq (direct)',
+  'env.attackCv': 'attack cv',
+  'env.sustainCv': 'sustain cv',
+  'env.decayCv': 'decay cv',
+  'pulser.periodCv': 'pulser period cv',
+  'mo.freqCv': 'm.o. freq cv',
+  'mo.indexCv': 'm.o. modulation cv',
+  'co.pitchCv': 'c.o. pitch cv',
+  'co.timbreCv': 'timbre cv',
+  'co.wsCv': 'w.s. cv',
+  'lpg1.cv': 'level 1 cv',
+  'lpg2.cv': 'level 2 cv',
+  'inv.in': 'inverter in',
+  'mo.fmIn': 'f.m. in',
+  'lpg1.in': 'gate1 in',
+  'pre.in': 'aux in',
+};
+
+/** "sequencer", "c.o. pitch cv", "master out"... */
+export function jackName(id) {
+  const j = JACK_BY_ID[id];
+  if (!j) return id;
+  return j.dir === 'out' ? SIGNAL_NAMES[j.signal] || j.label : INPUT_NAMES[id] || j.label;
+}
+
 /** Colour family for a jack (outputs by signal, inputs black/tiny). */
 export function jackColor(j) {
   if (j.type === 'tiny') return 'tiny';

@@ -16,7 +16,7 @@
 //   Delete/Backspace on a focused jack pulls its top plug.
 
 import { PatchGraph } from '../patch/graph.js';
-import { JACK_BY_ID, jackColor } from '../spec.js';
+import { JACK_BY_ID, jackColor, jackName } from '../spec.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const DRAG_THRESHOLD = 4;
@@ -27,7 +27,7 @@ const PLUG_RADII = { banana: [7.5, 5, 2.4], tiny: [6.5, 4, 2], bar: [5.5, 3.6, 1
 /** Cables whose ends are both above this line (panel px) loop upward. */
 const TOP_STRIP = 90;
 /** Two banana jacks closer than this (panel px) are joined by a shorting bar. */
-export const BAR_REACH = 72;
+export const BAR_REACH = 78;
 
 function svg(tag, attrs = {}) {
   const el = document.createElementNS(SVGNS, tag);
@@ -142,8 +142,44 @@ export class Patchbay {
   }
 
   jackName(id) {
-    const j = JACK_BY_ID[id];
-    return j ? `${j.label} ${j.dir === 'out' ? 'output' : 'input'}` : id;
+    return jackName(id);
+  }
+
+  /**
+   * The current patch as a list of connections, outputs first:
+   * [{ id, from, to, style: 'bar'|'tini'|'cable', stacked, color }]
+   */
+  describe() {
+    const rows = [];
+    for (const cable of this.graph.cables.values()) {
+      let [a, b] = cable.ends;
+      if (!a.jack || !b.jack) continue;
+      let ends = [0, 1];
+      if (JACK_BY_ID[a.jack].dir === 'in' && JACK_BY_ID[b.jack].dir === 'out') {
+        [a, b] = [b, a];
+        ends = [1, 0];
+      }
+      const style = this.views.get(cable.id)?.g.dataset.style || 'cable';
+      rows.push({
+        id: cable.id,
+        from: a.jack,
+        to: b.jack,
+        style,
+        stacked: ends.some((e) => this.graph.stackIndex(cable.id, e) > 0),
+        color: this.colorFor(cable),
+      });
+    }
+    return rows;
+  }
+
+  /** Highlight one cable (from the patch sheet). */
+  setHot(id, on) {
+    const v = this.views.get(id);
+    if (!v) return;
+    v.g.classList.toggle('hot', on);
+    v.g.classList.toggle('sheet-hot', on);
+    for (const p of v.plugs) p.classList.toggle('sheet-hot', on);
+    if (on) this.cableLayer.append(v.g);
   }
 
   emit() {
